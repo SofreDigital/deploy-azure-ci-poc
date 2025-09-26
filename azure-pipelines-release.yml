@@ -1,0 +1,245 @@
+# Azure DevOps Release Pipeline (YAML)
+# This pipeline deploys the applications to Azure App Service
+
+trigger: none # This is a release pipeline, so no CI trigger
+
+resources:
+  pipelines:
+  - pipeline: build-pipeline
+    source: 'DevOps-Build-Pipeline'
+    trigger:
+      branches:
+        include:
+        - main
+
+variables:
+  azureSubscription: 'your-azure-service-connection'
+  backendAppService: 'devops-backend-app'
+  frontendAppService: 'devops-frontend-app'
+  resourceGroupName: 'devops-test-rg'
+
+stages:
+- stage: DeployToStaging
+  displayName: 'Deploy to Staging Environment'
+  jobs:
+  - deployment: DeployBackendStaging
+    displayName: 'Deploy Backend to Staging'
+    environment: 'staging'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download Backend Artifacts'
+            inputs:
+              buildType: 'specific'
+              project: '$(System.TeamProjectId)'
+              pipeline: 'build-pipeline'
+              artifactName: 'backend-drop'
+              downloadPath: '$(Pipeline.Workspace)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy Backend to Staging Slot'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(backendAppService)'
+              deployToSlotOrASE: true
+              slotName: 'staging'
+              package: '$(Pipeline.Workspace)/backend-drop/**/*.zip'
+
+          - task: AzureAppServiceManage@0
+            displayName: 'Start Staging Slot'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              action: 'Start Azure App Service'
+              webAppName: '$(backendAppService)'
+              specifySlotOrASE: true
+              slotName: 'staging'
+
+  - deployment: DeployFrontendStaging
+    displayName: 'Deploy Frontend to Staging'
+    environment: 'staging'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download Frontend Artifacts'
+            inputs:
+              buildType: 'specific'
+              project: '$(System.TeamProjectId)'
+              pipeline: 'build-pipeline'
+              artifactName: 'frontend-drop'
+              downloadPath: '$(Pipeline.Workspace)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy Frontend to Staging Slot'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(frontendAppService)'
+              deployToSlotOrASE: true
+              slotName: 'staging'
+              package: '$(Pipeline.Workspace)/frontend-drop/frontend-build.zip'
+
+- stage: RunStagingTests
+  displayName: 'Run Staging Tests'
+  dependsOn: DeployToStaging
+  condition: succeeded()
+  jobs:
+  - job: SmokeTests
+    displayName: 'Run Smoke Tests'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Test Backend API Health'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $stagingUrl = "https://$(backendAppService)-staging.azurewebsites.net"
+          $healthEndpoint = "$stagingUrl/api/status/health"
+          
+          Write-Host "Testing health endpoint: $healthEndpoint"
+          
+          try {
+              $response = Invoke-RestMethod -Uri $healthEndpoint -Method Get -TimeoutSec 30
+              Write-Host "Health check response: $($response | ConvertTo-Json)"
+              
+              if ($response.Status -eq "Healthy") {
+                  Write-Host "✅ Backend health check passed"
+                  exit 0
+              } else {
+                  Write-Error "❌ Backend health check failed"
+                  exit 1
+              }
+          }
+          catch {
+              Write-Error "❌ Failed to reach health endpoint: $($_.Exception.Message)"
+              exit 1
+          }
+
+    - task: PowerShell@2
+      displayName: 'Test Frontend Availability'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $frontendUrl = "https://$(frontendAppService)-staging.azurewebsites.net"
+          
+          Write-Host "Testing frontend availability: $frontendUrl"
+          
+          try {
+              $response = Invoke-WebRequest -Uri $frontendUrl -Method Get -TimeoutSec 30
+              
+              if ($response.StatusCode -eq 200) {
+                  Write-Host "✅ Frontend is accessible"
+                  exit 0
+              } else {
+                  Write-Error "❌ Frontend returned status code: $($response.StatusCode)"
+                  exit 1
+              }
+          }
+          catch {
+              Write-Error "❌ Failed to reach frontend: $($_.Exception.Message)"
+              exit 1
+          }
+
+- stage: DeployToProduction
+  displayName: 'Deploy to Production Environment'
+  dependsOn: RunStagingTests
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployBackendProduction
+    displayName: 'Deploy Backend to Production'
+    environment: 'production'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download Backend Artifacts'
+            inputs:
+              buildType: 'specific'
+              project: '$(System.TeamProjectId)'
+              pipeline: 'build-pipeline'
+              artifactName: 'backend-drop'
+              downloadPath: '$(Pipeline.Workspace)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy Backend to Production'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(backendAppService)'
+              package: '$(Pipeline.Workspace)/backend-drop/**/*.zip'
+
+  - deployment: DeployFrontendProduction
+    displayName: 'Deploy Frontend to Production'
+    environment: 'production'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download Frontend Artifacts'
+            inputs:
+              buildType: 'specific'
+              project: '$(System.TeamProjectId)'
+              pipeline: 'build-pipeline'
+              artifactName: 'frontend-drop'
+              downloadPath: '$(Pipeline.Workspace)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy Frontend to Production'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(frontendAppService)'
+              package: '$(Pipeline.Workspace)/frontend-drop/frontend-build.zip'
+
+- stage: PostDeploymentTests
+  displayName: 'Post-Deployment Verification'
+  dependsOn: DeployToProduction
+  condition: succeeded()
+  jobs:
+  - job: ProductionSmokeTests
+    displayName: 'Production Smoke Tests'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Verify Production Deployment'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $backendUrl = "https://$(backendAppService).azurewebsites.net"
+          $frontendUrl = "https://$(frontendAppService).azurewebsites.net"
+          
+          Write-Host "Verifying production deployments..."
+          
+          # Test backend
+          try {
+              $backendHealth = Invoke-RestMethod -Uri "$backendUrl/api/status/health" -Method Get -TimeoutSec 30
+              Write-Host "✅ Backend production health: $($backendHealth.Status)"
+          }
+          catch {
+              Write-Error "❌ Backend production health check failed: $($_.Exception.Message)"
+          }
+          
+          # Test frontend
+          try {
+              $frontendResponse = Invoke-WebRequest -Uri $frontendUrl -Method Get -TimeoutSec 30
+              Write-Host "✅ Frontend production status: $($frontendResponse.StatusCode)"
+          }
+          catch {
+              Write-Error "❌ Frontend production check failed: $($_.Exception.Message)"
+          }

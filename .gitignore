@@ -1,0 +1,98 @@
+# Git ignore file for DevOps CI/CD Test Application
+
+# Node.js dependencies and build outputs
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/coverage/
+frontend/e2e/reports/
+*.tgz
+*.tar.gz
+
+# .NET Core build outputs
+backend/bin/
+backend/obj/
+backend/out/
+*.dll
+*.exe
+*.pdb
+*.cache
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Development and IDE files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment and configuration files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+appsettings.Local.json
+*.user
+*.userosscache
+*.sln.docstates
+
+# Logs and temporary files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Operating system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Azure and deployment artifacts
+*.publishsettings
+*.azurePubxml
+*.pubxml
+*.publishproj
+PublishScripts/
+
+# Test results and coverage
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+lcov.info
+
+# Package files
+*.nupkg
+*.snupkg
+packages/
+!packages/build/
+!packages/repositories.config
+
+# Backup and temporary files
+*.bak
+*.tmp
+*.temp
+*~
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Security and secrets
+*.pfx
+*.p12
+certificates/
+secrets/

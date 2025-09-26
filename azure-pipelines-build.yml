@@ -1,0 +1,168 @@
+# Azure DevOps Build Pipeline
+# This pipeline builds both the Angular frontend and .NET Core backend
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - frontend/*
+    - backend/*
+
+variables:
+  buildConfiguration: 'Release'
+  dotNetVersion: '2.2.x'
+  nodeVersion: '16.x'
+
+stages:
+- stage: Build
+  displayName: 'Build Applications'
+  jobs:
+  - job: BuildBackend
+    displayName: 'Build .NET Core Backend'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Use .NET Core SDK $(dotNetVersion)'
+      inputs:
+        packageType: 'sdk'
+        version: '$(dotNetVersion)'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore Backend Dependencies'
+      inputs:
+        command: 'restore'
+        projects: 'backend/**/*.csproj'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build Backend'
+      inputs:
+        command: 'build'
+        projects: 'backend/**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --no-restore'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Run Backend Tests'
+      inputs:
+        command: 'test'
+        projects: 'backend/**/*Tests.csproj'
+        arguments: '--configuration $(buildConfiguration) --no-build --verbosity normal'
+      continueOnError: true
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish Backend'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        projects: 'backend/**/*.csproj'
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/backend'
+        zipAfterPublish: true
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Backend Artifacts'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)/backend'
+        artifactName: 'backend-drop'
+        publishLocation: 'Container'
+
+  - job: BuildFrontend
+    displayName: 'Build Angular Frontend'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Use Node.js $(nodeVersion)'
+      inputs:
+        versionSpec: '$(nodeVersion)'
+
+    - task: Cache@2
+      displayName: 'Cache npm packages'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | frontend/package-lock.json'
+        restoreKeys: |
+          npm | "$(Agent.OS)"
+        path: '~/.npm'
+
+    - script: |
+        cd frontend
+        npm ci
+      displayName: 'Install Frontend Dependencies'
+
+    - script: |
+        cd frontend
+        npm run lint
+      displayName: 'Run Frontend Linting'
+      continueOnError: true
+
+    - script: |
+        cd frontend
+        npm run test -- --watch=false --browsers=ChromeHeadless
+      displayName: 'Run Frontend Tests'
+      continueOnError: true
+
+    - script: |
+        cd frontend
+        npm run build:prod
+      displayName: 'Build Frontend for Production'
+
+    - task: ArchiveFiles@2
+      displayName: 'Archive Frontend Build'
+      inputs:
+        rootFolderOrFile: 'frontend/dist'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/frontend-build.zip'
+        replaceExistingArchive: true
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Frontend Artifacts'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)/frontend-build.zip'
+        artifactName: 'frontend-drop'
+        publishLocation: 'Container'
+
+- stage: SecurityScan
+  displayName: 'Security and Code Quality'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - job: CodeAnalysis
+    displayName: 'Code Analysis and Security Scan'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Use .NET Core SDK $(dotNetVersion)'
+      inputs:
+        packageType: 'sdk'
+        version: '$(dotNetVersion)'
+
+    - task: SonarCloudPrepare@1
+      displayName: 'Prepare SonarCloud Analysis'
+      inputs:
+        SonarCloud: 'SonarCloud'
+        organization: 'your-sonarcloud-organization'
+        scannerMode: 'MSBuild'
+        projectKey: 'devops-test-app'
+        projectName: 'DevOps Test Application'
+      continueOnError: true
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build for Analysis'
+      inputs:
+        command: 'build'
+        projects: 'backend/**/*.csproj'
+        arguments: '--configuration $(buildConfiguration)'
+
+    - task: SonarCloudAnalyze@1
+      displayName: 'Run SonarCloud Analysis'
+      continueOnError: true
+
+    - task: SonarCloudPublish@1
+      displayName: 'Publish SonarCloud Results'
+      inputs:
+        pollingTimeoutSec: '300'
+      continueOnError: true
